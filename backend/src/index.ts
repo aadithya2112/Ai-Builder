@@ -21,25 +21,25 @@ interface GenerateCodeRequest {
   prompt: string;
 }
 
-interface GenerateCodeResponse {
-  success: boolean;
-  html: string;
-  css: string;
-  js: string;
-  message?: string;
-}
-
+// Interface for the non-streaming validation response
 interface ValidatePromptResponse {
   valid: boolean;
   reason?: string;
 }
 
-// Utility to validate if a prompt can be implemented with HTML/CSS/JS
+interface ModifyCodeRequest {
+  prompt: string; // The user's modification instruction
+  currentHtml: string;
+  currentCss: string;
+  currentJs: string;
+}
+
+// Utility to validate if a prompt can be implemented with HTML/CSS/JS (remains non-streaming)
 async function validatePrompt(prompt: string): Promise<ValidatePromptResponse> {
   try {
     const response = await anthropic.messages.create({
-      model: "claude-3-7-sonnet-20250219",
-      max_tokens: 1024,
+      model: "claude-3-haiku-20240307", // Using a faster model for validation
+      max_tokens: 512, // Reduced tokens for validation
       system: `You are an expert web developer evaluating if a project request can be implemented using only client-side HTML, CSS, and JavaScript without any backend services or databases. 
       
       Respond with a JSON object containing:
@@ -50,7 +50,7 @@ async function validatePrompt(prompt: string): Promise<ValidatePromptResponse> {
       
       Invalid projects include those requiring databases, authentication systems, payment processing, or any server-side functionality.
       
-      IMPORTANT: Return ONLY the raw JSON object without markdown formatting, code blocks, or backticks.`,
+      IMPORTANT: Return ONLY the raw JSON object without markdown formatting, code blocks, or backticks. Example: {"valid": true, "reason": "This is a static UI component."}`,
       messages: [
         {
           role: "user",
@@ -60,19 +60,22 @@ async function validatePrompt(prompt: string): Promise<ValidatePromptResponse> {
     });
 
     try {
-      // Extract the JSON from the response
       const content = (response.content[0] as TextBlock).text;
-
-      // Extract JSON content from markdown code block if present
       let jsonString = content;
-
-      // Check if content is wrapped in code block and extract the JSON part
       const codeBlockMatch = content.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
       if (codeBlockMatch && codeBlockMatch[1]) {
         jsonString = codeBlockMatch[1].trim();
+      } else {
+        // Attempt to find JSON directly if no code block
+        const jsonStart = content.indexOf("{");
+        const jsonEnd = content.lastIndexOf("}");
+        if (jsonStart !== -1 && jsonEnd !== -1 && jsonEnd > jsonStart) {
+          jsonString = content.substring(jsonStart, jsonEnd + 1);
+        }
       }
 
-      console.log("Extracted JSON string:", jsonString);
+      console.log("Raw validation response:", content);
+      console.log("Attempting to parse JSON string:", jsonString);
 
       const result = JSON.parse(jsonString);
       return {
@@ -81,11 +84,13 @@ async function validatePrompt(prompt: string): Promise<ValidatePromptResponse> {
       };
     } catch (parseError) {
       console.error("Failed to parse validation response:", parseError);
-      // Add more detailed logging to help with debugging
-      console.error("Parse error details:", (parseError as Error).message);
+      console.error(
+        "Raw content causing parse error:",
+        (response.content[0] as TextBlock).text
+      );
       return {
         valid: false,
-        reason: "Failed to validate prompt: " + (parseError as Error).message,
+        reason: "Failed to validate prompt: Could not parse AI response.",
       };
     }
   } catch (error) {
@@ -97,106 +102,26 @@ async function validatePrompt(prompt: string): Promise<ValidatePromptResponse> {
   }
 }
 
-// Generate HTML, CSS, JS code based on the prompt
-async function generateCode(prompt: string): Promise<GenerateCodeResponse> {
-  try {
-    const response = await anthropic.messages.create({
-      model: "claude-3-7-sonnet-20250219",
-      max_tokens: 16384, // Increasing token limit for code generation
-      system: `You are an expert web developer who creates complete, working websites using HTML, CSS, and JavaScript.
+// --- API Routes ---
 
-      The user will provide a description of a website they want to build. Your task is to generate:
-      
-      1. Clean, semantic HTML
-      2. Modern CSS with responsive design principles
-      3. Working JavaScript that implements the requested functionality
-      
-      IMPORTANT FORMATTING INSTRUCTIONS:
-      - Return your response in JSON format with these exact fields:
-        - "html": The complete HTML code
-        - "css": The complete CSS code
-        - "js": The complete JavaScript code
-      - Include ALL necessary code for a fully functioning website
-      - Make modern, responsive designs that work on mobile and desktop
-      - Add helpful comments in your code
-      - DO NOT include explanations outside the JSON structure
-      - Include proper event listeners and DOM manipulation in JavaScript
-      - Use ES6+ JavaScript features where appropriate
-      - Add error handling in JavaScript
-      - Include appropriate CSS resets/normalizations
-      - Implement proper accessibility features (ARIA attributes where needed)
-      - Ensure all interactive elements have hover/focus states
-      
-      Example response format:
-      {
-        "html": "<!DOCTYPE html><html lang="en">...</html>",
-        "css": "* { box-sizing: border-box; }...",
-        "js": "document.addEventListener('DOMContentLoaded', () => {...});"
-      }
-      Please make sure not to give new line character in the reponse format for html, css and js.
-      IMPORTANT: Return ONLY the raw JSON object without markdown formatting, code blocks, or backticks.
-      `,
-      messages: [
-        {
-          role: "user",
-          content: `Create a complete, working website based on this description: "${prompt}"`,
-        },
-      ],
-    });
-
-    try {
-      // Extract the JSON from the response
-      const content = (response.content[0] as TextBlock).text;
-      // Find JSON content (it might be wrapped in ```json blocks)
-      const jsonMatch = content.match(/```json\n([\s\S]*?)\n```/) ||
-        content.match(/```\n([\s\S]*?)\n```/) || [null, content];
-
-      const jsonString = jsonMatch[1] || content;
-      const result = JSON.parse(jsonString);
-
-      return {
-        success: true,
-        html: result.html || "",
-        css: result.css || "",
-        js: result.js || "",
-      };
-    } catch (parseError) {
-      console.error("Failed to parse code generation response:", parseError);
-      return {
-        success: false,
-        html: "",
-        css: "",
-        js: "",
-        message: "Failed to parse generated code",
-      };
-    }
-  } catch (error) {
-    console.error("Error generating code:", error);
-    return {
-      success: false,
-      html: "",
-      css: "",
-      js: "",
-      message: "Error generating code",
-    };
-  }
-}
-
-// API Routes
+// Validation endpoint (remains non-streaming)
 app.post("/api/validate-prompt", async (req: Request, res: Response) => {
   const { prompt } = req.body as GenerateCodeRequest;
-  console.log(prompt);
-  if (!prompt || typeof prompt !== "string") {
+  console.log("Received validation request for prompt:", prompt);
+
+  if (!prompt || typeof prompt !== "string" || prompt.trim().length === 0) {
+    console.log("Validation failed: Invalid prompt format.");
     res.status(400).json({
       valid: false,
       reason:
-        "Invalid prompt format. Please provide a text description of your website.",
+        "Invalid prompt format. Please provide a non-empty text description of your website.",
     });
     return;
   }
 
   try {
     const validationResult = await validatePrompt(prompt);
+    console.log("Validation result:", validationResult);
     res.json(validationResult);
   } catch (error) {
     console.error("Error in validate-prompt endpoint:", error);
@@ -207,50 +132,234 @@ app.post("/api/validate-prompt", async (req: Request, res: Response) => {
   }
 });
 
+// Code generation endpoint (NOW STREAMING)
 app.post("/api/generate-code", async (req: Request, res: Response) => {
   const { prompt } = req.body as GenerateCodeRequest;
+  console.log("Received generation request for prompt:", prompt);
 
-  if (!prompt || typeof prompt !== "string") {
-    res.status(400).json({
-      // Added return here
-      success: false,
-      html: "",
-      css: "",
-      js: "",
-      message:
-        "Invalid prompt format. Please provide a text description of your website.",
-    });
+  if (!prompt || typeof prompt !== "string" || prompt.trim().length === 0) {
+    console.log("Generation failed: Invalid prompt format.");
+    // Since this is streaming, we can't send a JSON error easily after headers might be sent.
+    // Best practice is to validate upfront or send an error message within the stream if possible.
+    // For simplicity here, we send a 400 before starting the stream.
+    res
+      .status(400)
+      .send(
+        "Invalid prompt format. Please provide a non-empty text description of your website."
+      );
+    return;
   }
 
   try {
-    // First validate if the prompt is feasible
+    // Optional: Re-validate before starting the expensive generation.
+    // You might skip this if validation always happens client-side first.
     const validationResult = await validatePrompt(prompt);
-
     if (!validationResult.valid) {
-      res.json({
-        // Added return here
-        success: false,
-        html: "",
-        css: "",
-        js: "",
-        message:
-          validationResult.reason ||
-          "Your request cannot be implemented with HTML/CSS/JS alone",
-      });
+      console.log(
+        "Generation failed: Prompt validation failed.",
+        validationResult.reason
+      );
+      // Send validation error before starting stream
+      res
+        .status(400)
+        .send(
+          `Prompt validation failed: ${
+            validationResult.reason ||
+            "Request cannot be implemented with HTML/CSS/JS alone"
+          }`
+        );
+      return;
     }
 
-    // If valid, generate the code
-    const codeResult = await generateCode(prompt);
-    res.json(codeResult);
-  } catch (error) {
-    console.error("Error in generate-code endpoint:", error);
-    res.status(500).json({
-      success: false,
-      html: "",
-      css: "",
-      js: "",
-      message: "Server error while generating code",
+    console.log("Prompt validated, starting code generation stream...");
+
+    // Set headers for streaming
+    res.setHeader("Content-Type", "text/plain; charset=utf-8"); // Sending raw text chunks
+    res.setHeader("Transfer-Encoding", "chunked");
+    res.setHeader("X-Content-Type-Options", "nosniff"); // Prevent browser from guessing MIME type
+
+    const stream = await anthropic.messages.stream({
+      model: "claude-3-5-sonnet-20240620", // Using latest Sonnet model
+      max_tokens: 4096, // Adjusted token limit
+      system: `You are an expert web developer who creates complete, working websites using HTML, CSS, and JavaScript.
+
+      The user will provide a description of a website they want to build. Your task is to generate:
+      
+      1. Clean, semantic HTML
+      2. Modern CSS with responsive design principles
+      3. Working JavaScript that implements the requested functionality
+      
+      IMPORTANT FORMATTING INSTRUCTIONS:
+      - Return your response in JSON format with these exact fields:
+        - "html": The complete HTML code as a single string.
+        - "css": The complete CSS code as a single string.
+        - "js": The complete JavaScript code as a single string.
+      - Include ALL necessary code for a fully functioning website.
+      - Make modern, responsive designs that work on mobile and desktop.
+      - Add helpful comments in your code.
+      - DO NOT include explanations outside the JSON structure.
+      - Include proper event listeners and DOM manipulation in JavaScript.
+      - Use ES6+ JavaScript features where appropriate.
+      - Add basic error handling in JavaScript.
+      - Include appropriate CSS resets/normalizations (like box-sizing).
+      - Implement basic accessibility features (e.g., alt attributes, semantic HTML).
+      - Ensure interactive elements have basic hover/focus states in CSS.
+      
+      Example response format (ensure JSON is valid):
+      {
+        "html": "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"UTF-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\"><title>My App</title><link rel=\"stylesheet\" href=\"style.css\"></head><body><div id=\"app\"></div><script src=\"script.js\"></script></body></html>",
+        "css": "*, *::before, *::after { box-sizing: border-box; } body { margin: 0; font-family: sans-serif; } #app { padding: 1rem; }",
+        "js": "document.addEventListener('DOMContentLoaded', () => { const app = document.getElementById('app'); app.innerHTML = '<h1>Hello World!</h1>'; });"
+      }
+
+      IMPORTANT: Return ONLY the raw, valid JSON object. Do not wrap it in markdown code blocks (like \`\`\`json ... \`\`\`) or add any other text before or after the JSON. Ensure the strings within the JSON are properly escaped if necessary.
+      `,
+      messages: [
+        {
+          role: "user",
+          content: `Create a complete, working website based on this description: "${prompt}"`,
+        },
+      ],
     });
+
+    // Stream the response
+    for await (const event of stream) {
+      if (
+        event.type === "content_block_delta" &&
+        event.delta.type === "text_delta"
+      ) {
+        process.stdout.write(event.delta.text); // Log chunks to server console if needed
+        res.write(event.delta.text); // Send chunk to client
+      } else if (event.type === "message_stop") {
+        console.log("\nStream finished.");
+        // Optional: You could signal the end here if needed, but res.end() does that.
+      } else if (
+        event.type === "message_start" ||
+        event.type === "content_block_start" ||
+        event.type === "content_block_stop" ||
+        event.type === "message_delta"
+      ) {
+        // Log other events if needed for debugging
+        // console.log("Stream event:", event.type);
+      }
+    }
+
+    res.end(); // End the response stream
+  } catch (error) {
+    console.error("Error in generate-code stream:", error);
+    // If headers haven't been sent, we can send a 500 status.
+    // If they have, we can't change the status, so we try to end the stream.
+    if (!res.headersSent) {
+      res.status(500).send("Server error while generating code stream.");
+    } else {
+      // Try to signal an error within the stream if possible, though tricky.
+      // Ending the stream abruptly is often the only option.
+      console.error("Headers already sent, cannot send 500 status.");
+      res.end('\n{"error": "An error occurred during streaming."}'); // Attempt to send an error JSON fragment
+    }
+  }
+});
+
+app.post("/api/modify-code", async (req: Request, res: Response) => {
+  const { prompt, currentHtml, currentCss, currentJs } =
+    req.body as ModifyCodeRequest;
+  console.log("Received modification request:", prompt);
+
+  // Basic validation
+  if (!prompt || typeof prompt !== "string" || prompt.trim().length === 0) {
+    res.status(400).send("Invalid modification prompt provided.");
+    return;
+  }
+  if (
+    currentHtml === undefined ||
+    currentCss === undefined ||
+    currentJs === undefined
+  ) {
+    res.status(400).send("Missing current code (HTML, CSS, or JS).");
+    return;
+  }
+
+  try {
+    console.log("Starting code modification stream...");
+
+    // Set headers for streaming
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.setHeader("Transfer-Encoding", "chunked");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+
+    const stream = await anthropic.messages.stream({
+      model: "claude-3-5-sonnet-20240620", // Or your preferred model
+      max_tokens: 4096,
+      system: `You are an expert web developer. You are tasked with modifying an existing set of HTML, CSS, and JavaScript code based on a user's request.
+
+      RULES:
+      - Analyze the user's request and the provided code carefully.
+      - Apply the requested changes to the appropriate language(s) (HTML, CSS, JS).
+      - Return the *complete, updated code* for ALL THREE languages, even if only one was modified.
+      - Ensure the returned code is fully functional and integrates the changes.
+      - Maintain clean, semantic, and well-commented code.
+
+      IMPORTANT FORMATTING INSTRUCTIONS:
+      - Return your response ONLY as a single, raw, valid JSON object.
+      - The JSON object MUST have these exact fields: "html", "css", "js".
+      - The value for each field MUST be a single string containing the complete code for that language.
+      - Do NOT wrap the JSON in markdown code blocks (\`\`\`).
+      - Do NOT include any explanations or conversational text outside the JSON structure.
+
+      Example response format:
+      {
+        "html": "<!DOCTYPE html>...",
+        "css": "body { ... } ...",
+        "js": "document.addEventListener..."
+      }`,
+      messages: [
+        {
+          role: "user",
+          content: `Modify the following website code based on this request: "${prompt}"
+
+Current HTML:
+\`\`\`html
+${currentHtml}
+\`\`\`
+
+Current CSS:
+\`\`\`css
+${currentCss}
+\`\`\`
+
+Current JavaScript:
+\`\`\`javascript
+${currentJs}
+\`\`\`
+
+Please provide the complete updated code in the specified JSON format.`,
+        },
+      ],
+    });
+
+    // Stream the response (same logic as generate-code)
+    for await (const event of stream) {
+      if (
+        event.type === "content_block_delta" &&
+        event.delta.type === "text_delta"
+      ) {
+        res.write(event.delta.text);
+      } else if (event.type === "message_stop") {
+        console.log("\nModification stream finished.");
+      }
+    }
+
+    res.end();
+  } catch (error) {
+    console.error("Error in modify-code stream:", error);
+    if (!res.headersSent) {
+      res.status(500).send("Server error while modifying code stream.");
+    } else {
+      console.error("Headers already sent, cannot send 500 status.");
+      res.end(
+        '\n{"error": "An error occurred during modification streaming."}'
+      );
+    }
   }
 });
 
