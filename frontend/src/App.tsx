@@ -1,6 +1,7 @@
 import { useState } from "react";
 import LandingPage from "./pages/LandingPage";
 import CodeEditor from "./components/CodeEditor";
+import { API_URL } from "../config";
 
 function extractPartialValue(key: string, partialJson: string): string {
   const keyPattern = `"${key}":\\s*"`;
@@ -73,7 +74,7 @@ function App() {
     let success = false;
 
     try {
-      const response = await fetch("http://localhost:3000/api/generate-code", {
+      const response = await fetch(`${API_URL}/api/generate-code`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -158,7 +159,7 @@ function App() {
     let success = false;
 
     try {
-      const response = await fetch("http://localhost:3000/api/modify-code", {
+      const response = await fetch(`${API_URL}/api/modify-code`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

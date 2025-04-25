@@ -27,7 +27,7 @@ export default function LandingPage({
             <Wand2 className="w-12 h-12 text-blue-500" />
           </div>
           <h1 className="text-4xl font-bold text-white mb-4">
-            AI Code Generator
+            AI Website Builder
           </h1>
           <p className="text-gray-400 text-lg">
             Describe what you want to create and let AI generate the code for
